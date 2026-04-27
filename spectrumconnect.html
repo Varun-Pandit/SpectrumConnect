@@ -24,6 +24,8 @@
 -->
 
 <!-- Firebase SDKs (v9 compat) -->
+
+<script src="https://unpkg.com/@daily-co/daily-js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -230,6 +232,20 @@
   /* ── TOAST ── */
   #toast { position:fixed; bottom:2rem; left:50%; transform:translateX(-50%); background:var(--bg3); border:1px solid var(--card-border); color:var(--text); padding:.75rem 1.5rem; border-radius:50px; font-size:.85rem; z-index:999; opacity:0; transition:opacity .3s; pointer-events:none; }
   #toast.show { opacity:1; }
+
+
+  /* ── VIDEO CALL MODAL ── */
+  .video-modal-bg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.95); z-index:500; flex-direction:column; align-items:center; justify-content:center; }
+  .video-modal-bg.open { display:flex; }
+  .video-container { width:min(900px,95vw); height:min(600px,80vh); border-radius:16px; overflow:hidden; position:relative; background:#000; }
+  #daily-frame { width:100%; height:100%; border:none; border-radius:16px; }
+  .video-controls { display:flex; gap:1rem; margin-top:1.5rem; align-items:center; }
+  .vid-btn { padding:.7rem 1.8rem; border-radius:50px; border:none; font-family:var(--font-body); font-size:.9rem; font-weight:600; cursor:pointer; transition:all .2s; }
+  .vid-btn-end { background:#EF4444; color:#fff; }
+  .vid-btn-end:hover { background:#DC2626; }
+  .vid-status { color:var(--muted); font-size:.85rem; text-align:center; }
+  .vid-connecting { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:1rem; color:var(--muted); }
+  .vid-spinner { width:50px; height:50px; border-radius:50%; border:3px solid var(--card-border); border-top-color:var(--primary); animation:spin 1s linear infinite; }
 
   @media(max-width:700px) {
     .dash-layout,.chat-layout { grid-template-columns:1fr; }
@@ -799,7 +815,7 @@ function openChatRoom(roomId, otherName, emoji) {
       <div class="ct-avatar" style="background:rgba(124,58,237,.2)">${emoji}</div>
       <div><div class="ct-name">${otherName}</div><div class="ct-status">Online</div></div>
       <div class="chat-topbar-actions">
-        <button class="icon-btn" title="Video call">📹</button>
+        <button class="icon-btn" title="Video call" onclick="startVideoCall('${roomId}')">📹</button>
         <button class="icon-btn" title="Report" onclick="reportUser('${roomId}')">🚩</button>
       </div>
     </div>
@@ -901,6 +917,120 @@ function timeAgo(date) {
 function scrollTo(id) {
   document.getElementById(id)?.scrollIntoView({ behavior:'smooth' });
 }
+
+// ─── DAILY.CO VIDEO CALLS ─────────────────────────────────────────────
+const DAILY_API_KEY = '3bc8baae298258b8024f9b6043007d591515bdc86720ca58acb54e167ec0c48b';
+const DAILY_SUBDOMAIN = 'spectrumconnect';
+let callFrame = null;
+let currentRoomName = null;
+
+async function startVideoCall(roomId) {
+  const modal = document.getElementById('video-modal');
+  const frame = document.getElementById('daily-frame');
+  const connecting = document.getElementById('vid-connecting');
+  const status = document.getElementById('vid-status');
+
+  modal.classList.add('open');
+  connecting.style.display = 'flex';
+  frame.style.display = 'none';
+  status.textContent = '🔴 Creating room...';
+
+  try {
+    // Create a Daily.co room via API
+    const roomName = 'sc-' + roomId.substring(0, 8) + '-' + Date.now();
+    currentRoomName = roomName;
+
+    const response = await fetch('https://api.daily.co/v1/rooms', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + DAILY_API_KEY
+      },
+      body: JSON.stringify({
+        name: roomName,
+        properties: {
+          exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour expiry
+          enable_chat: true,
+          enable_knocking: false,
+          start_video_off: false,
+          start_audio_off: false
+        }
+      })
+    });
+
+    const room = await response.json();
+
+    if (room.url) {
+      // Load Daily.co call in iframe
+      frame.src = room.url;
+      status.textContent = '🟢 Connected — Share this call!';
+
+      frame.onload = () => {
+        connecting.style.display = 'none';
+        frame.style.display = 'block';
+      };
+
+      // Save room to Firestore so other user can join
+      const uid = auth.currentUser?.uid;
+      if (uid && roomId) {
+        await db.collection('chats').doc(roomId).update({
+          activeVideoRoom: room.url,
+          videoStartedBy: uid,
+          videoStartedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
+
+      toast('Video call started! Share the link 📹');
+    } else {
+      throw new Error(room.error || 'Could not create room');
+    }
+  } catch(err) {
+    console.error('Video call error:', err);
+    connecting.innerHTML = '<p style="color:#FCA5A5">❌ Could not start video call.<br>Check your internet connection.</p>';
+    status.textContent = '❌ Failed to connect';
+    toast('Video call failed. Try again!');
+  }
+}
+
+function endVideoCall() {
+  const modal = document.getElementById('video-modal');
+  const frame = document.getElementById('daily-frame');
+  const connecting = document.getElementById('vid-connecting');
+
+  frame.src = '';
+  frame.style.display = 'none';
+  connecting.style.display = 'flex';
+  connecting.innerHTML = '<div class="vid-spinner"></div><p>Connecting video call...</p>';
+  modal.classList.remove('open');
+  currentRoomName = null;
+  toast('Video call ended 👋');
+}
+
+// Close video modal on Escape key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (document.getElementById('video-modal').classList.contains('open')) {
+      endVideoCall();
+    }
+  }
+});
+
 </script>
+
+<!-- VIDEO CALL MODAL -->
+<div class="video-modal-bg" id="video-modal">
+  <div class="video-container">
+    <div class="vid-connecting" id="vid-connecting">
+      <div class="vid-spinner"></div>
+      <p>Connecting video call...</p>
+    </div>
+    <iframe id="daily-frame" allow="camera; microphone; fullscreen; display-capture" style="display:none"></iframe>
+  </div>
+  <div class="video-controls">
+    <div class="vid-status" id="vid-status">🔴 Connecting...</div>
+    <button class="vid-btn vid-btn-end" onclick="endVideoCall()">📵 End Call</button>
+  </div>
+</div>
+
 </body>
 </html>
