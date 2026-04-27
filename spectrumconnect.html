@@ -591,15 +591,12 @@ async function doLogin() {
   try {
     const cred = await auth.signInWithEmailAndPassword(email, pass);
     const user = cred.user;
-    let userData = {
-      name: user.displayName || email.split('@')[0],
-      email: user.email, identity: '', pronouns: '', bio: ''
-    };
+    let userData = { name: user.displayName || email.split('@')[0], email: user.email, identity: '', pronouns: '', bio: '' };
     try {
       const doc = await db.collection('users').doc(user.uid).get();
       if (doc.exists) { userData = doc.data(); }
       await db.collection('users').doc(user.uid).update({ online: true });
-    } catch(e) { console.warn('Firestore:', e); }
+    } catch(fe) { console.warn('Firestore offline:', fe.message); }
     closeModal();
     loadDashboard(userData);
     toast('Welcome back! 💜');
@@ -609,12 +606,13 @@ async function doLogin() {
       'auth/user-not-found': 'No account found with this email.',
       'auth/wrong-password': 'Incorrect password. Please try again.',
       'auth/invalid-credential': 'Email or password is incorrect.',
+      'auth/invalid-email': 'Please enter a valid email address.',
       'auth/too-many-requests': 'Too many attempts. Try again later.'
     };
     showErr('li-error', msgs[err.code] || err.message);
   }
+}
 
-  
 // SIGN OUT
 async function logout() {
   const uid = auth.currentUser?.uid;
