@@ -590,29 +590,31 @@ async function doLogin() {
 
   try {
     const cred = await auth.signInWithEmailAndPassword(email, pass);
-    const doc  = await db.collection('users').doc(cred.user.uid).get();
-
-    if (doc.exists) {
-      // Mark user as online
-      await db.collection('users').doc(cred.user.uid).update({ online: true });
-      closeModal();
-      loadDashboard(doc.data());
-      toast('Welcome back! 💜');
-    } else {
-      showErr('li-error', 'Profile not found. Please sign up first.');
-    }
+    const user = cred.user;
+    let userData = {
+      name: user.displayName || email.split('@')[0],
+      email: user.email, identity: '', pronouns: '', bio: ''
+    };
+    try {
+      const doc = await db.collection('users').doc(user.uid).get();
+      if (doc.exists) { userData = doc.data(); }
+      await db.collection('users').doc(user.uid).update({ online: true });
+    } catch(e) { console.warn('Firestore:', e); }
+    closeModal();
+    loadDashboard(userData);
+    toast('Welcome back! 💜');
   } catch(err) {
     btn.textContent = 'Sign in'; btn.classList.remove('loading-btn');
     const msgs = {
-      'auth/user-not-found':   'No account found with this email.',
-      'auth/wrong-password':   'Incorrect password. Please try again.',
-      'auth/invalid-email':    'Please enter a valid email address.',
-      'auth/too-many-requests':'Too many failed attempts. Please try again later.'
+      'auth/user-not-found': 'No account found with this email.',
+      'auth/wrong-password': 'Incorrect password. Please try again.',
+      'auth/invalid-credential': 'Email or password is incorrect.',
+      'auth/too-many-requests': 'Too many attempts. Try again later.'
     };
     showErr('li-error', msgs[err.code] || err.message);
   }
-}
 
+  
 // SIGN OUT
 async function logout() {
   const uid = auth.currentUser?.uid;
